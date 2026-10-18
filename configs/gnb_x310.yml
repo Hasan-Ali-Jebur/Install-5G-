@@ -1,0 +1,43 @@
+cu_cp:
+  amf:
+    addrs: 172.22.0.10          # AMF container
+    port: 38412
+    bind_addrs: 172.22.0.1      # host side of the Docker bridge
+    supported_tracking_areas:
+      - tac: 1                  # = TAC in .env
+        plmn_list:
+          - plmn: "00101"       # = MCC+MNC in .env and first 5 digits of the IMSI
+            tai_slice_support_list:
+              - sst: 1
+
+cu_up:
+  ngu:
+    socket:
+      - bind_addr: 172.22.0.1   # N3 towards UPF 172.22.0.8
+
+ru_sdr:
+  device_driver: uhd
+  device_args: type=x300,addr=192.168.40.2,master_clock_rate=184.32e6,send_frame_size=8000,recv_frame_size=8000
+  clock: internal               # 'external' with a 10 MHz + PPS reference
+  sync: internal
+  srate: 23.04                  # 184.32 / 8 → 20 MHz carrier
+  tx_gain: 30
+  rx_gain: 30
+  time_alignment_calibration: auto
+
+cell_cfg:
+  dl_arfcn: 627340              # 3410.1 MHz, n78
+  band: 78
+  channel_bandwidth_MHz: 20
+  common_scs: 30
+  plmn: "00101"
+  tac: 1
+  pci: 1
+
+log:
+  filename: /tmp/gnb.log
+  all_level: info
+
+pcap:
+  ngap_enable: true
+  ngap_filename: /tmp/gnb_ngap.pcap
