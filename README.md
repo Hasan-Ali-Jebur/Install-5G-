@@ -7,6 +7,8 @@ A step-by-step guide to building a private **5G Standalone (SA)** testbed:
 - **Radio:** Ettus USRP X310 with 2 × UBX-40 daughterboards over 10 GbE
 - **UE:** Google Pixel 9 Pro with a programmable sysmoISIM-SJA5 SIM
 
+> 💻 **No hardware?** See the [ZMQ + simulated UE guide](zmq/README.md) to run the whole network on one PC.
+
 > ⚠️ **Regulatory note.** Transmitting on cellular bands (e.g. n78) requires a licence (in the UK: Ofcom) or a shielded / cabled setup. Check with your lab before going on air.
 
 ---
