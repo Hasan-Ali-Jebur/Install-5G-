@@ -95,7 +95,40 @@ newgrp docker
 docker --version && docker compose version
 ```
 
-### 3.2 Kernel and firewall
+### 3.2 Make sure DNS works inside Docker
+
+On many networks (university, corporate, some ISPs), public resolvers such as `8.8.8.8` are blocked. Docker containers can't use the host's local resolver (`127.0.0.53`), so they fall back to `8.8.8.8`, and `docker build` then fails with errors like `curl: (6) Could not resolve host`.
+
+Test it:
+
+```bash
+getent hosts www.mongodb.org                          # host resolves?
+docker run --rm busybox nslookup www.mongodb.org      # container resolves?
+```
+
+If the container fails, find your network's real DNS servers:
+
+```bash
+resolvectl status | grep -A2 "DNS Servers"
+# or
+nmcli dev show | grep -i "IP4.DNS"
+```
+
+Give them to Docker (merge the `dns` key by hand if `/etc/docker/daemon.json` already exists):
+
+```bash
+sudo tee /etc/docker/daemon.json <<'EOF'
+{
+  "dns": ["<DNS server 1>", "<DNS server 2>"]
+}
+EOF
+sudo systemctl restart docker          # stops running containers
+docker run --rm busybox nslookup www.mongodb.org
+```
+
+Quick alternative for a single build: `docker build --network host ...`.
+
+### 3.3 Kernel and firewall
 
 ```bash
 echo "net.ipv4.ip_forward=1" | sudo tee /etc/sysctl.d/99-open5gs.conf
@@ -103,7 +136,7 @@ sudo sysctl --system
 sudo ufw disable
 ```
 
-### 3.3 Remove leftovers (if you had native Open5GS or other labs before)
+### 3.4 Remove leftovers (if you had native Open5GS or other labs before)
 
 ```bash
 sudo systemctl stop 'open5gs-*' 2>/dev/null; sudo systemctl disable 'open5gs-*' 2>/dev/null
@@ -142,7 +175,7 @@ SMF_DNS1=<DNS reachable from your network>
 SMF_DNS2=<DNS reachable from your network>
 ```
 
-> **University of York:** public DNS (`8.8.8.8`) is blocked, so use `144.32.128.242` and `144.32.128.243`.
+> **DNS for the phone/UE:** use DNS servers that work on **your** network. Some networks block public resolvers like `8.8.8.8`. Find yours with `resolvectl status | grep -A2 "DNS Servers"`, and check one works with `dig @<server> google.com`. If public DNS works for you, `8.8.8.8` / `8.8.4.4` are fine.
 
 ### 4.3 Use the DNN `srsapn`
 
@@ -463,7 +496,7 @@ sudo ip netns exec ue1 ping -c 4 1.1.1.1
 
 ```bash
 sudo mkdir -p /etc/netns/ue1
-echo "nameserver <your DNS, e.g. 144.32.128.242>" | sudo tee /etc/netns/ue1/resolv.conf
+echo "nameserver <your network DNS server>" | sudo tee /etc/netns/ue1/resolv.conf
 sudo ip netns exec ue1 ping -c 2 google.com
 ```
 
@@ -520,7 +553,8 @@ sudo ip route del 192.168.100.0/24 via 172.22.0.8    # optional
 | AMF: registration rejected, PLMN not allowed | PLMN/TAC mismatch | `00101` and TAC `1` in `.env`, gNB and IMSI prefix |
 | Registered but `PDU Session Establishment` fails | DNN mismatch | `srsapn` in SMF/UPF, subscriber and `[nas] apn` |
 | UE has IP but can't ping out | Missing routes | Section 11.1 routes. `docker exec upf ping 8.8.8.8` must work |
-| Ping by IP works, names don't | DNS | Section 11.3, and campus DNS in `.env` |
+| Ping by IP works, names don't | DNS | Section 11.3, and your network's DNS in `.env` |
+| `docker build`: `Could not resolve host` | DNS blocked inside containers | Section 3.2 |
 | Restarting only the UE fails | ZMQ socket state | Restart **gNB then UE** together |
 
 Logs: gNB `/tmp/gnb.log`, UE `/tmp/ue.log`, core `docker logs <amf|smf|upf|ausf|udm>`.

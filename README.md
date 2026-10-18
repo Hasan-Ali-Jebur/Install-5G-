@@ -98,7 +98,7 @@ Example used in this guide:
 
 | Interface | IP | Purpose |
 |---|---|---|
-| `eno2` | public / campus IP | Internet uplink |
+| `eno2` | your network IP | Internet uplink |
 | `eno1` | `10.5.48.1/16` | Direct link to another PC (SSH, WebUI) |
 | `enp45s0f1` | `192.168.40.1/24` | 10 GbE to the X310 |
 
@@ -161,6 +161,39 @@ newgrp docker
 docker --version && docker compose version
 ```
 
+### 3.7 Make sure DNS works inside Docker
+
+On many networks (university, corporate, some ISPs), public resolvers such as `8.8.8.8` are blocked. Docker containers can't use the host's local resolver (`127.0.0.53`), so they fall back to `8.8.8.8`, and `docker build` then fails with errors like `curl: (6) Could not resolve host`.
+
+Test it:
+
+```bash
+getent hosts www.mongodb.org                          # host resolves?
+docker run --rm busybox nslookup www.mongodb.org      # container resolves?
+```
+
+If the container fails, find your network's real DNS servers:
+
+```bash
+resolvectl status | grep -A2 "DNS Servers"
+# or
+nmcli dev show | grep -i "IP4.DNS"
+```
+
+Give them to Docker (merge the `dns` key by hand if `/etc/docker/daemon.json` already exists):
+
+```bash
+sudo tee /etc/docker/daemon.json <<'EOF'
+{
+  "dns": ["<DNS server 1>", "<DNS server 2>"]
+}
+EOF
+sudo systemctl restart docker          # stops running containers
+docker run --rm busybox nslookup www.mongodb.org
+```
+
+Quick alternative for a single build: `docker build --network host ...`.
+
 ---
 
 ## 4. Open5GS 5G Core in Docker
@@ -195,7 +228,7 @@ SMF_DNS1=<DNS server reachable from your network>
 SMF_DNS2=<DNS server reachable from your network>
 ```
 
-> **University of York:** the campus network blocks Google DNS (`8.8.8.8`). Use the university resolvers: `SMF_DNS1=144.32.128.242` and `SMF_DNS2=144.32.128.243`. Elsewhere, check what works with `resolvectl status` and `dig @<server> google.com`.
+> **DNS for the phone/UE:** use DNS servers that work on **your** network. Some networks block public resolvers like `8.8.8.8`. Find yours with `resolvectl status | grep -A2 "DNS Servers"`, and check one works with `dig @<server> google.com`. If public DNS works for you, `8.8.8.8` / `8.8.4.4` are fine.
 
 `DOCKER_HOST_IP` defaults to a made-up address (`192.168.1.223`). Replace it with a real host IP. When the gNB runs on the same host, its value has little effect.
 
@@ -697,7 +730,8 @@ ping google.com          # fails but 1.1.1.1 works → DNS problem (see 4.2)
 | Authentication / MAC failure | Ki or OPc in DB ≠ card | Re-add subscriber with data sheet values (10) |
 | Registered but no data | DNN mismatch (`internet` vs `srsapn`), stale static IP | DNN identical in SMF/UPF, subscriber and phone APN |
 | Phone stops trying the network | `00101` added to FPLMN | Clear FPLMN (9.5) |
-| UE has IP but no websites | Campus blocks public DNS | Set `SMF_DNS1/2` to local resolvers (4.2) |
+| UE has IP but no websites | Network blocks public DNS | Set `SMF_DNS1/2` to your network's resolvers (4.2) |
+| `docker build`: `Could not resolve host` | DNS blocked inside containers | Section 3.7 |
 | UE internet broken after old native install | Stale host `ogstun` hijacks routes | `sudo ip link del ogstun` (3.5) |
 | Unstable cell / phone can't lock | Frequency error of internal oscillator | Use an external 10 MHz + PPS reference, `clock/sync: external` |
 
