@@ -217,7 +217,16 @@ SMF_DNS2=<DNS server reachable from your network>
 ```
 
 - `DOCKER_HOST_IP` defaults to a placeholder (`192.168.1.223`), so set a real host IP. When the gNB runs on the same host, its value has little effect.
-- **DNS for the UE:** if public DNS works on your network, `8.8.8.8` / `8.8.4.4` are fine. Otherwise use the servers found in 3.3. Check one with `dig @<server> google.com`.
+- **DNS for the UE:** the SMF sends `SMF_DNS1`/`SMF_DNS2` to every UE in the PDU Session Establishment Accept (ePCO). If public DNS works on your network, `8.8.8.8` / `8.8.4.4` are fine. Many networks block it, though. Test, and if needed use your network's own resolvers:
+
+  ```bash
+  nslookup google.com 8.8.8.8                       # timeout → public DNS blocked
+  resolvectl status | grep -A2 "DNS Servers"        # your network's resolvers
+  sed -i 's/^SMF_DNS1=.*/SMF_DNS1=<DNS server 1>/; s/^SMF_DNS2=.*/SMF_DNS2=<DNS server 2>/' .env
+  grep -E "^SMF_DNS" .env
+  ```
+
+  After changing `.env` later on, recreate the core (`docker compose -f sa-deploy.yaml down && docker compose -f sa-deploy.yaml up -d`), then reconnect the UEs.
 
 ### 4.3 Set the DNN (APN) to `srsapn` ⚪ [ALL]
 
@@ -411,8 +420,8 @@ ru_sdr:
   device_driver: zmq
   device_args: tx_port=tcp://127.0.0.1:2000,rx_port=tcp://127.0.0.1:2001,base_srate=23.04e6
   srate: 23.04
-  tx_gain: 75
-  rx_gain: 75
+  tx_gain: 0                   # ZMQ: OCUDU requires gain <= 0 dB
+  rx_gain: 0
 
 cell_cfg:
   dl_arfcn: 368500              # band 3 FDD
@@ -779,7 +788,11 @@ cd ~/5g/srsRAN_4G/build/srsue/src
 sudo ./srsue ~/5g/ue_zmq.conf
 ```
 
-With ZMQ, the gNB **waits** for the UE before its clock runs. That's normal. Expected UE output:
+With ZMQ, the gNB **waits** for the UE before its clock runs. That's normal.
+
+> **Restarting the UE:** with ZMQ, srsUE can't reconnect to a gNB that's already running. If you stop srsUE, it hangs at `Attaching UE...` on the next start. Always stop **both** and start the **gNB first, then the UE**. The core can keep running. After each reconnect, re-add the namespace default route (section 12).
+
+Expected UE output:
 
 ```
 Attaching UE...
@@ -855,13 +868,18 @@ sudo ip netns exec ue1 ip route add default via 192.168.100.1 dev tun_srsue
 | Internet | `sudo ip netns exec ue1 ping -c 4 1.1.1.1` | `ping 1.1.1.1` |
 | DNS | see below | `ping google.com` |
 
-🧪 **DNS inside the srsUE namespace:**
+🧪 **DNS inside the srsUE namespace:** srsUE receives the DNS servers from the core but **doesn't apply them**. Inside `ue1`, Linux falls back to the host's `/etc/resolv.conf` (`127.0.0.53`), which isn't reachable there, so names fail with `Temporary failure in name resolution`. Give the namespace its own resolver file, using the same servers as `SMF_DNS1/2`:
 
 ```bash
+sudo ip netns exec ue1 nslookup google.com 8.8.8.8          # timeout → public DNS blocked here
+resolvectl status | grep -A2 "DNS Servers"                  # host: your network's resolvers
+
 sudo mkdir -p /etc/netns/ue1
-echo "nameserver <DNS server>" | sudo tee /etc/netns/ue1/resolv.conf
-sudo ip netns exec ue1 ping -c 2 google.com
+printf "nameserver <DNS server 1>\nnameserver <DNS server 2>\n" | sudo tee /etc/netns/ue1/resolv.conf
+sudo ip netns exec ue1 ping -c 3 google.com
 ```
+
+The file persists, so you set it once. A 📱 phone applies the core's DNS automatically (check with `adb shell dumpsys connectivity | grep -i dns`).
 
 **Throughput (iperf3):**
 
@@ -908,7 +926,7 @@ sudo ip route del 192.168.100.0/24 via 172.22.0.8        # optional
 | AMF: registration rejected | IMSI prefix ≠ network PLMN | 9.3, or fix the srsUE `imsi` |
 | Registered but PDU session fails / no data | DNN mismatch, stale static IP | `srsapn` in SMF/UPF, subscriber and UE |
 | UE has IP but can't ping out | Missing routes | Section 12 routes; `docker exec upf ping 8.8.8.8` must work |
-| Ping by IP works, names don't | DNS | `SMF_DNS1/2` in `.env` (4.2); srsUE netns `resolv.conf` |
+| Ping by IP works, names don't (`Temporary failure in name resolution`) | Public DNS blocked, or srsUE netns has no resolver | Network resolvers in `SMF_DNS1/2` (4.2) and in `/etc/netns/ue1/resolv.conf` (12) |
 | Internet broken after an old native install | Stale host `ogstun` | `sudo ip link del ogstun` (3.4) |
 
 ### 🔵 ZMQ / 🧪 srsUE
@@ -917,11 +935,12 @@ sudo ip route del 192.168.100.0/24 via 172.22.0.8        # optional
 |---|---|---|
 | `zmq` missing from `Available radio types` | OCUDU built without `libzmq3-dev` | Install it, rebuild OCUDU (section 7) |
 | srsUE `Supported RF device list` lacks `zmq` | Same for srsRAN 4G | Install `libzmq3-dev`, delete `build/`, rebuild |
+| gNB: `Channel gain must be <= 0.0 dB for ZMQ-device` | Gains > 0 in `ru_sdr` | Set `tx_gain: 0` and `rx_gain: 0` (8A) |
 | Nothing happens after both start | Ports not crossed | gNB `tx=2000 / rx=2001`, UE `tx=2001 / rx=2000` |
 | `srate` / `base_srate` errors | Rates differ | Same values on gNB and UE |
 | UE stuck at `Attaching UE...` | Too few CPU cores / slow VM | ≥ 6 cores, close other loads |
 | `Error opening netns` | Namespace missing | `sudo ip netns add ue1` |
-| Restarting only the UE fails | ZMQ socket state | Restart **gNB, then UE** |
+| Restarting only the UE hangs at `Attaching UE...` | ZMQ stream stalled | Restart **gNB, then UE**. If still stuck: `sudo pkill -9 srsue; sudo pkill -9 gnb` and check `sudo ss -ltnp \| grep -E ":2000\|:2001"` is empty |
 
 ### 🟢 UHD / 📱 Phone
 
