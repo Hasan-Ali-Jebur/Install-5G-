@@ -1,19 +1,19 @@
 cu_cp:
   amf:
-    addrs: 172.22.0.10          # AMF container
+    addrs: 172.22.0.10
     port: 38412
-    bind_addrs: 172.22.0.1      # host side of the Docker bridge
+    bind_addrs: 172.22.0.1
     supported_tracking_areas:
-      - tac: 1                  # = TAC in .env
+      - tac: 1
         plmn_list:
-          - plmn: "00101"       # = MCC+MNC in .env and first 5 digits of the IMSI
+          - plmn: "00101"       # = first 5 digits of the SIM's IMSI
             tai_slice_support_list:
               - sst: 1
 
 cu_up:
   ngu:
     socket:
-      - bind_addr: 172.22.0.1   # N3 towards UPF 172.22.0.8
+      - bind_addr: 172.22.0.1
 
 ru_sdr:
   device_driver: uhd
@@ -26,7 +26,7 @@ ru_sdr:
   time_alignment_calibration: auto
 
 cell_cfg:
-  dl_arfcn: 627340              # 3410.1 MHz, n78
+  dl_arfcn: 627340              # 3410.1 MHz, n78 TDD
   band: 78
   channel_bandwidth_MHz: 20
   common_scs: 30
