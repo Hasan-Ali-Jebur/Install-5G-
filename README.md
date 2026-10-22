@@ -793,7 +793,7 @@ sudo ./srsue ~/5g/ue_zmq.conf
 
 With ZMQ, the gNB **waits** for the UE before its clock runs. That's normal.
 
-> **Restarting the UE:** with ZMQ, srsUE can't reconnect to a gNB that's already running. If you stop srsUE, it hangs at `Attaching UE...` on the next start. Always stop **both** and start the **gNB first, then the UE**. The core can keep running. After each reconnect, re-add the namespace default route (section 12).
+> **Restarting the UE:** with ZMQ, srsUE can't reconnect to a gNB that's already running. If you stop srsUE, it hangs at `Attaching UE...` on the next start. Always stop **both** and start the **gNB first, then the UE**. The core can keep running. After each reconnect, re-add the namespace default route (section 12). srsUE recreates `tun_srsue` on every start, which removes the route.
 
 Expected UE output:
 
@@ -856,10 +856,11 @@ A successful attach looks like this:
 
 ```bash
 # Host → UE subnet via the UPF container (all paths)
-sudo ip route add 192.168.100.0/24 via 172.22.0.8
+sudo ip route replace 192.168.100.0/24 via 172.22.0.8
 
-# 🧪 srsUE: default route inside the namespace
-sudo ip netns exec ue1 ip route add default via 192.168.100.1 dev tun_srsue
+# 🧪 srsUE: default route inside the namespace (repeat after EVERY srsUE start)
+sudo ip netns exec ue1 ip route replace default via 192.168.100.1 dev tun_srsue
+sudo ip netns exec ue1 ip route          # must include: default via 192.168.100.1
 ```
 
 **Ping:**
@@ -929,6 +930,7 @@ sudo ip route del 192.168.100.0/24 via 172.22.0.8        # optional
 | AMF: registration rejected | IMSI prefix ≠ network PLMN | 9.3, or fix the srsUE `imsi` |
 | Registered but PDU session fails / no data | DNN mismatch, stale static IP | `srsapn` in SMF/UPF, subscriber and UE |
 | UE has IP but can't ping out | Missing routes | Section 12 routes; `docker exec upf ping 8.8.8.8` must work |
+| 🧪 `ping: connect: Network is unreachable` or iperf3 `unable to send control message: Bad file descriptor` | srsUE restarted, so the namespace default route is gone | `sudo ip netns exec ue1 ip route replace default via 192.168.100.1 dev tun_srsue` |
 | Ping by IP works, names don't (`Temporary failure in name resolution`) | Public DNS blocked, or srsUE netns has no resolver | Network resolvers in `SMF_DNS1/2` (4.2) and in `/etc/netns/ue1/resolv.conf` (12) |
 | Internet broken after an old native install | Stale host `ogstun` | `sudo ip link del ogstun` (3.4) |
 
@@ -1046,6 +1048,14 @@ cd ~/5g/ocudu/build/apps/gnb && sudo ./gnb -c ~/5g/gnb_zmq.yml
 # 4. UE: srsUE (11A) or phone (11B), then the routes from section 12
 ```
 
+The gNB console should end with:
+
+```
+Connected to AMF. Supported PLMNs: 00101
+==== gNB started ===
+E2: Connection to Near-RT-RIC on 10.0.2.10:36421 established
+```
+
 Check that the gNB registered with the RIC:
 
 ```bash
@@ -1062,6 +1072,7 @@ All xApps run inside the `python_xapp_runner` container, from the `oran-sc-ric` 
 
 ```bash
 # Terminal A: traffic (srsUE example, see section 12)
+sudo ip netns exec ue1 ip route replace default via 192.168.100.1 dev tun_srsue
 iperf3 -s -B 172.22.0.1 &
 sudo ip netns exec ue1 iperf3 -c 172.22.0.1 -t 600 -R
 ```
