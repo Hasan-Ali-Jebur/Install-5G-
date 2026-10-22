@@ -1035,6 +1035,26 @@ EOF
 grep -n -A8 -E "^(e2|metrics):" ~/5g/gnb_zmq.yml
 ```
 
+**Add a slice to the cell (required for RC control).** The RC xApp sets a *slice-level* PRB quota, so the gNB needs a slice it can apply it to. This goes **inside `cell_cfg`**, so use this snippet instead of appending to the file:
+
+```bash
+python3 - <<'EOF'
+import os
+p = os.path.expanduser("~/5g/gnb_zmq.yml")      # or gnb_x310.yml
+s = open(p).read()
+if "slicing:" not in s:
+    s = s.replace("  pci: 1\n", """  pci: 1
+  slicing:                        # needed for E2SM-RC slice-level PRB quota control
+    - sst: 1
+      sched_cfg:
+        min_prb_policy_ratio: 0
+        max_prb_policy_ratio: 100
+""", 1)
+    open(p, "w").write(s)
+EOF
+grep -n -A5 "slicing:" ~/5g/gnb_zmq.yml
+```
+
 - **`metrics: layers: enable_rlc: true` is required.** The KPM throughput metrics are computed from RLC metrics, which are off by default. Without them the xApp gets only zeros (node level) or no indications at all (per-UE report styles 4/5).
 - List all metrics options with `./gnb metrics layers --help` and `./gnb metrics periodicity --help`.
 - `enable_cu_cp_e2` / `enable_cu_up_e2` add CU-level E2 nodes (default `false`).
@@ -1124,13 +1144,37 @@ E2SM_KPM RIC Indication Content:
 --Metric: DRB.UEThpUl, Value: [1213.67]
 ```
 
-**Control (E2SM-RC)**: alternates a UE's downlink PRB quota every 5 s:
+**Control (E2SM-RC)**: sets a UE's slice-level PRB quota, cycling the maximum through 30 → 50 → 70 → 100 % every 5 s.
+
+The example xApp hard-codes the slice as **SST 1 + SD 1**, but this network's slice (core, UE and gNB) is **SST 1 with no SD**. "No SD" is encoded as `0xFFFFFF`. Patch the xApp library once. `xApps/python` is mounted into the container, so no rebuild is needed:
 
 ```bash
+cd ~/5g/oran-sc-ric/xApps/python/lib
+cp e2sm_rc_module.py e2sm_rc_module.py.orig
+sed -i -E 's/^([[:space:]]*)sd = 1[[:space:]]*\r?$/\1sd = 0xFFFFFF   # no SD: matches SST-1-only slices/' e2sm_rc_module.py
+grep -n "sd = " e2sm_rc_module.py          # must show sd = 0xFFFFFF
+
+cd ~/5g/oran-sc-ric
 docker compose exec python_xapp_runner ./simple_rc_xapp.py
 ```
 
-Watch the effect in the gNB console (`t` + Enter): the UE's DL throughput drops and recovers every 5 s.
+Expected output, and the effect in the gNB console (`t` + Enter) with iperf3 running:
+
+```
+12:04:20 Send RIC Control Request to E2 node ID: gnbd_001_001_00019b_0 for UE ID: 0, PRB_min_ratio: 10, PRB_max_ratio: 30
+Received RIC_CONTROL_ACK
+```
+
+| Max PRB ratio | DL rate in the gNB trace (20 MHz ZMQ cell) |
+|---|---|
+| 30 % | ~20 Mbit/s |
+| 50 % | ~34 Mbit/s |
+| 70 % | ~46 Mbit/s |
+| 100 % | ~59 Mbit/s |
+
+The gNB log shows each request with its parameters: `sudo grep -A10 "Slice-level PRB quota Control Request" /tmp/gnb.log | tail -12`.
+
+If the gNB still answers `RIC_CONTROL_FAILURE`, also make the dedicated ratio respect O-RAN's *dedicated ≤ min ≤ max* rule: `sed -i 's/dedicated_prb_ratio=100/dedicated_prb_ratio=0/g' ~/5g/oran-sc-ric/xApps/python/simple_rc_xapp.py`.
 
 **Others** in `xApps/python/`:
 
@@ -1185,6 +1229,7 @@ To run the gNB **without** the RIC again, set `enable_du_e2: false`, or remove t
 | `E2 SETUP FAILURE` after a gNB restart | RIC 60 s time-to-wait | Wait 60 s, restart the gNB (then the UE) |
 | gNB rejects the `e2` keys | Key names differ in your OCUDU version | Try `addr` / `bind_addr`; check the OCUDU config reference |
 | KPM values always `0`, or no indications with `--kpm_report_style=4/5` | RLC metrics disabled in the gNB | Add `metrics: layers: enable_rlc: true` (15.3), restart the gNB (wait 60 s) and the UE |
+| `Received RIC_CONTROL_FAILURE` from `simple_rc_xapp.py` | No slice in `cell_cfg`, or the xApp's slice (SD 1) ≠ the network's (no SD) | Add `slicing` (15.3) and patch `sd = 0xFFFFFF` (15.5). Check `PLMN/SST/SD` in the gNB log |
 | xApp subscribes but prints nothing | Known RIC issue / no traffic | Restart the xApp; run iperf3 so metrics change |
 | All metric values 0 | No UE attached or no traffic | Attach the UE, generate traffic (15.5) |
 | `docker compose up` build fails | DNS inside Docker | Section 3.3 |
