@@ -1042,19 +1042,17 @@ grep -n -A8 -E "^(e2|metrics):" ~/5g/gnb_zmq.yml
 
 ### 15.4 Start order
 
-**Core → RIC → gNB → UE**:
+**Core → RIC → gNB → UE → routes → traffic.** Use one terminal per step:
 
 ```bash
-# 1. Core (if not running)
+# Terminal 1: core (if not running)
 cd ~/5g/docker_open5gs && docker compose -f sa-deploy.yaml up -d
 
-# 2. RIC (if not running)
-cd ~/5g/oran-sc-ric && docker compose up -d
+# Terminal 1: RIC (if not running)
+cd ~/5g/oran-sc-ric && docker compose up -d && docker compose ps     # 7 services Up
 
-# 3. gNB (ZMQ example)
+# Terminal 2: gNB (ZMQ example; use gnb_x310.yml for the USRP)
 cd ~/5g/ocudu/build/apps/gnb && sudo ./gnb -c ~/5g/gnb_zmq.yml
-
-# 4. UE: srsUE (11A) or phone (11B), then the routes from section 12
 ```
 
 The gNB console should end with:
@@ -1065,6 +1063,28 @@ Connected to AMF. Supported PLMNs: 00101
 E2: Connection to Near-RT-RIC on 10.0.2.10:36421 established
 ```
 
+Then start the UE. 🧪 **srsUE (ZMQ):**
+
+```bash
+# Terminal 3: UE (start only after "gNB started")
+sudo ip netns add ue1 2>/dev/null
+cd ~/5g/srsRAN_4G/build/srsue/src && sudo ./srsue ~/5g/ue_zmq.conf
+# wait for: PDU Session Establishment successful. IP: 192.168.100.x
+
+# Terminal 4: routes (repeat after EVERY srsUE start)
+sudo ip route replace 192.168.100.0/24 via 172.22.0.8
+sudo ip netns exec ue1 ip route replace default via 192.168.100.1 dev tun_srsue
+sudo ip netns exec ue1 ping -c 3 172.22.0.1                          # UE → host through 5G
+
+# Terminal 5: iperf3 server (own terminal, no "&", so Ctrl+C stops it)
+iperf3 -s -B 172.22.0.1
+
+# Terminal 4: traffic, so the KPM metrics are non-zero
+sudo ip netns exec ue1 iperf3 -c 172.22.0.1 -t 600 -R               # downlink
+```
+
+📱 **Phone (USRP):** run the gNB with `gnb_x310.yml`, then toggle airplane mode on the phone (11B) and generate traffic from it (e.g. a speed test or a video).
+
 Check that the gNB registered with the RIC:
 
 ```bash
@@ -1073,18 +1093,11 @@ docker compose logs e2mgr  | grep -i -E "setup|connected|gnb_"
 docker compose logs e2term | grep -i -E "setup|sctp" | tail
 ```
 
-> **60-second rule:** after the gNB disconnects, the RIC makes the E2 agent wait **60 s** before it may reconnect. If you restart the gNB sooner, the RIC answers `E2 SETUP FAILURE` and the gNB has no RIC connection. Wait a minute between gNB restarts (with ZMQ, also restart the UE afterwards).
+> **60-second rule:** after the gNB disconnects, the RIC makes the E2 agent wait **60 s** before it may reconnect. If you restart the gNB sooner, the RIC answers `E2 SETUP FAILURE` and the gNB has no RIC connection. Wait a minute between gNB restarts. With ZMQ, always restart the UE after the gNB, then re-run the Terminal 4 routes.
 
 ### 15.5 Run the example xApps
 
-All xApps run inside the `python_xapp_runner` container, from the `oran-sc-ric` folder. Generate traffic first so the metrics are non-zero:
-
-```bash
-# Terminal A: traffic (srsUE example, see section 12)
-sudo ip netns exec ue1 ip route replace default via 192.168.100.1 dev tun_srsue
-iperf3 -s -B 172.22.0.1 &
-sudo ip netns exec ue1 iperf3 -c 172.22.0.1 -t 600 -R
-```
+All xApps run inside the `python_xapp_runner` container, from the `oran-sc-ric` folder. Keep the iperf3 traffic from 15.4 running so the metrics are non-zero, and start each xApp in its **own terminal** (it runs in the foreground until Ctrl+C).
 
 **Monitoring (E2SM-KPM)**
 
