@@ -1011,7 +1011,7 @@ ip -br addr | grep 10.0.2.1     # new bridge for the RIC network
 
 ### 15.3 Enable the E2 agent in OCUDU
 
-Append the `e2` block to your gNB config, `~/5g/gnb_zmq.yml` or `~/5g/gnb_x310.yml` (also in [`configs/e2_ric.yml`](configs/e2_ric.yml)). Add it **once**, as a top-level section:
+Append the `e2` and `metrics` blocks to your gNB config, `~/5g/gnb_zmq.yml` or `~/5g/gnb_x310.yml` (also in [`configs/e2_ric.yml`](configs/e2_ric.yml)). Add them **once**, as top-level sections. If your config already has a `metrics:` section, merge the keys into it instead:
 
 ```bash
 cat >> ~/5g/gnb_zmq.yml <<'EOF'
@@ -1024,10 +1024,19 @@ e2:
   addrs: 10.0.2.10            # RIC e2term
   bind_addrs: 10.0.2.1        # host on the RIC Docker network
   port: 36421
+
+metrics:
+  layers:
+    enable_rlc: true            # REQUIRED: feeds E2SM-KPM DRB.UEThpDl / DRB.UEThpUl
+    enable_mac: true
+  periodicity:
+    du_report_period: 1000      # ms
 EOF
-grep -n -A8 "^e2:" ~/5g/gnb_zmq.yml
+grep -n -A8 -E "^(e2|metrics):" ~/5g/gnb_zmq.yml
 ```
 
+- **`metrics: layers: enable_rlc: true` is required.** The KPM throughput metrics are computed from RLC metrics, which are off by default. Without them the xApp gets only zeros (node level) or no indications at all (per-UE report styles 4/5).
+- List all metrics options with `./gnb metrics layers --help` and `./gnb metrics periodicity --help`.
 - `enable_cu_cp_e2` / `enable_cu_up_e2` add CU-level E2 nodes (default `false`).
 - If OCUDU rejects `addrs` / `bind_addrs`, use `addr` / `bind_addr` (the srsRAN key names).
 
@@ -1092,11 +1101,14 @@ docker compose exec python_xapp_runner ./kpm_mon_xapp.py --kpm_report_style=5
 Expected output:
 
 ```
-RIC Indication Received from gnb_001_001_0000019b for Subscription ID: 65
+Subscribe to E2 node ID: gnbd_001_001_00019b_0, RAN func: e2sm_kpm for metrics ['DRB.UEThpDl', 'DRB.UEThpUl']
+Successfully subscribed with Subscription ID: ...
+
+RIC Indication Received from gnbd_001_001_00019b_0 for Subscription ID: 4
 E2SM_KPM RIC Indication Content:
--Measurements Data:
---Metric: DRB.UEThpDl, Value: ...
---Metric: DRB.UEThpUl, Value: ...
+-granulPeriod: 100
+--Metric: DRB.UEThpDl, Value: [59040.39]      # kbit/s ≈ the iperf3 downlink rate
+--Metric: DRB.UEThpUl, Value: [1213.67]
 ```
 
 **Control (E2SM-RC)**: alternates a UE's downlink PRB quota every 5 s:
@@ -1159,6 +1171,7 @@ To run the gNB **without** the RIC again, set `enable_du_e2: false`, or remove t
 | gNB can't connect to the RIC / SCTP errors | RIC not running, wrong IPs | `docker compose ps`; `ping 10.0.2.10`; `addrs: 10.0.2.10`, `bind_addrs: 10.0.2.1` |
 | `E2 SETUP FAILURE` after a gNB restart | RIC 60 s time-to-wait | Wait 60 s, restart the gNB (then the UE) |
 | gNB rejects the `e2` keys | Key names differ in your OCUDU version | Try `addr` / `bind_addr`; check the OCUDU config reference |
+| KPM values always `0`, or no indications with `--kpm_report_style=4/5` | RLC metrics disabled in the gNB | Add `metrics: layers: enable_rlc: true` (15.3), restart the gNB (wait 60 s) and the UE |
 | xApp subscribes but prints nothing | Known RIC issue / no traffic | Restart the xApp; run iperf3 so metrics change |
 | All metric values 0 | No UE attached or no traffic | Attach the UE, generate traffic (15.5) |
 | `docker compose up` build fails | DNS inside Docker | Section 3.3 |

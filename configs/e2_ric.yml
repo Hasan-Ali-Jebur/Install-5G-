@@ -7,3 +7,10 @@ e2:
   addrs: 10.0.2.10            # RIC e2term
   bind_addrs: 10.0.2.1        # host on the RIC Docker network
   port: 36421
+
+metrics:
+  layers:
+    enable_rlc: true            # REQUIRED: feeds E2SM-KPM DRB.UEThpDl / DRB.UEThpUl
+    enable_mac: true
+  periodicity:
+    du_report_period: 1000      # ms
