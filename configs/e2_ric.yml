@@ -1,0 +1,9 @@
+# Append to gnb_zmq.yml or gnb_x310.yml to connect OCUDU to the O-RAN SC near-RT RIC (srsran/oran-sc-ric).
+e2:
+  enable_du_e2: true          # E2 agent in the DU (monolithic gNB = one E2 node)
+  e2sm_kpm_enabled: true      # metrics (KPM)
+  e2sm_rc_enabled: true       # RAN control (RC)
+  e2sm_ccc_enabled: true      # cell configuration and control (CCC)
+  addrs: 10.0.2.10            # RIC e2term
+  bind_addrs: 10.0.2.1        # host on the RIC Docker network
+  port: 36421

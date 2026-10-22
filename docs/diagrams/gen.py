@@ -298,3 +298,48 @@ s.text(835, 495, "Each container = own network namespace (eth0, IP, routes).  ve
        size=13, fill="#333")
 s.save("docker-network.svg", "Docker networking of the 5G core")
 print("ok")
+
+# ---------------------------------------------------------------- near-RT RIC
+s = SVG(1500, 730)
+s.rect(20, 50, 1460, 660, MACHINE, rx=14)
+s.text(40, 695, "Host PC (single machine, ZMQ or USRP)", size=16, weight="bold", anchor="start")
+s.text(750, 32, "O-RAN SC near-RT RIC (Docker) + xApps connected to OCUDU over E2", size=21, weight="bold")
+# RIC block
+rx, ry, rw, rh = 60, 110, 760, 420
+s.rect(rx, ry, rw, rh, CORE_BG, rx=40)
+s.text(rx + rw / 2, ry - 12, "O-RAN SC near-RT RIC  (i-release, Docker)", size=17, weight="bold")
+s.rect(rx + 20, ry + rh - 48, rw - 40, 30, YELLOW, rx=6)
+s.text(rx + rw / 2, ry + rh - 28, "RIC Docker network  10.0.2.0/24   (host = 10.0.2.1)", size=13, weight="bold")
+s.rect(rx + 30, ry + 22, rw - 60, 28, BLUE, rx=4)
+s.text(rx + rw / 2, ry + 42, "RIC platform  ·  RMR message routing + REST", size=14, weight="bold")
+plat = [("e2mgr", "10.0.2.11"), ("dbaas", "10.0.2.12"), ("submgr", "10.0.2.13"), ("appmgr", "10.0.2.14"), ("rtmgr_sim", "10.0.2.15")]
+for i, (n, ip) in enumerate(plat):
+    s.server(rx + 34 + i * 142, ry + 80, 112, 52, n, ip, d=8)
+s.server(rx + 560, ry + 190, 150, 80, "e2term", "10.0.2.10 :36421", d=10)
+# xApp runner
+s.rect(rx + 34, ry + 180, 470, 170, "#f7f3fd", rx=16, dash="6,4", stroke="#7a5fb5")
+s.text(rx + 269, ry + 202, "python_xapp_runner  ·  10.0.2.20", size=13, weight="bold", fill="#5a3f95")
+for i, (n, sub) in enumerate([("KPM monitor", "E2SM-KPM"), ("RC control", "E2SM-RC"), ("your xApp", "Python")]):
+    s.box(rx + 50 + i * 150, ry + 220, 135, 100, n, [sub, "xApp"], fill=PURPLE, size=15)
+s.line(rx + 504, ry + 265, rx + 560, ry + 235, start=True)
+s.label(rx + 532, ry + 236, "RMR", size=11)
+# gNB
+gx, gy, gw, gh = 900, 230, 240, 170
+s.box(gx, gy, gw, gh, "gNB", ["OCUDU", "E2 agent (DU)", "KPM · RC · CCC"], size=22)
+s.text(gx + gw / 2, gy - 12, "OCUDU", size=16, weight="bold")
+s.path(f"M {rx+710+10} {ry+225} C 860 {ry+225} 860 300 {gx} 300", start=True, sw=2.2)
+s.label(836, 262, "E2 · E2AP/SCTP :36421", size=12)
+s.text(836, 282, "bind 10.0.2.1 → 10.0.2.10", size=11, fill="#333")
+# core + UE
+s.box(1230, 200, 220, 110, "Open5GS 5GC", ["Docker 172.22.0.0/24", "AMF .10 · UPF .8"], fill=GREEN, size=16)
+s.line(gx + gw, 280, 1230, 255, start=True)
+s.label(1185, 252, "N2 / N3", size=12)
+s.box(900, 560, 240, 110, "UE", ["srsUE (ZMQ)", "or phone (USRP)"], fill=PURPLE, size=18)
+s.line(gx + gw / 2, gy + gh, gx + gw / 2, 560, start=True, dash="7,5")
+s.label(gx + gw / 2 + 60, 490, "ZMQ / radio", size=12)
+# flow notes
+s.lines(80, 580, ["① gNB → e2term: E2 Setup (registers RAN functions KPM, RC, CCC)",
+                  "② xApp → submgr (REST) → e2term → gNB: RIC Subscription",
+                  "③ gNB → e2term → xApp (RMR): RIC Indication with metrics",
+                  "④ xApp → e2term → gNB: RIC Control (e.g. PRB quota)"], size=14, gap=26, anchor="start")
+s.save("mode-ric.svg", "O-RAN SC near-RT RIC with xApps connected to OCUDU")

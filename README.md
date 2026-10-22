@@ -23,6 +23,8 @@ The 5G core (Open5GS in Docker) and the gNB (OCUDU) are the same in every case.
 
 A real phone needs a real radio, so **ZMQ + phone is not possible**.
 
+**Optional add-on, for any path:** connect OCUDU to the **O-RAN SC near-RT RIC** and run **xApps** over E2 (section 15).
+
 Throughout the guide, steps are tagged:
 
 | Tag | Follow it if you use |
@@ -50,6 +52,7 @@ Throughout the guide, steps are tagged:
 | [11. Run](#11-run-the-network) | 11A | 11B | 11C |
 | [12. Verify and test](#12-verify-and-test-connectivity--all) | ✅ | ✅ | ✅ |
 | [13. Stop](#13-stop-the-network--all) · [14. Troubleshooting](#14-troubleshooting) | ✅ | ✅ | ✅ |
+| [15. O-RAN near-RT RIC + xApps](#15-o-ran-near-rt-ric-and-xapps--all) *(optional add-on)* | ➕ | ➕ | ➕ |
 
 ---
 
@@ -960,15 +963,208 @@ Logs: gNB `/tmp/gnb.log`, srsUE `/tmp/ue.log`, core `docker logs <amf|smf|upf|au
 
 ---
 
-## 15. Next steps
+## 15. O-RAN: near-RT RIC and xApps ⚪ [ALL]
+
+This **add-on** connects OCUDU to the **O-RAN Software Community (SC) near-RT RIC** over the **E2** interface, then runs **xApps** that read live RAN metrics (E2SM-KPM) and send control commands (E2SM-RC / E2SM-CCC). It works with **any path** (ZMQ + srsUE is the easiest way to start).
+
+![near-RT RIC](docs/images/mode-ric.svg)
+
+We use [srsran/oran-sc-ric](https://github.com/srsran/oran-sc-ric): a minimal **i-release** O-RAN SC RIC that runs with **Docker Compose** (no Kubernetes or Helm), plus a Python xApp framework and example xApps.
+
+### 15.1 Components
+
+| Container | IP | Role |
+|---|---|---|
+| `e2term` | **10.0.2.10** (SCTP **36421**) | E2 termination: the gNB's E2 agent connects here |
+| `e2mgr` | 10.0.2.11 | Manages E2 nodes and connections |
+| `dbaas` | 10.0.2.12 | Redis database (shared data layer) |
+| `submgr` | 10.0.2.13 | Turns xApp subscriptions (REST) into E2 messages |
+| `appmgr` | 10.0.2.14 | xApp manager |
+| `rtmgr_sim` | 10.0.2.15 | Routing manager simulator (static RMR routes) |
+| `python_xapp_runner` | 10.0.2.20 | Runs the Python xApps |
+| Host on the RIC network | **10.0.2.1** | The gNB's E2 `bind_addrs` |
+
+The RIC has its **own Docker network (`10.0.2.0/24`)**, separate from the core's (`172.22.0.0/24`). Just like with the core, the host sits on both bridges, so the gNB on the host reaches `e2term` directly.
+
+How an xApp gets data:
+
+1. **E2 Setup:** the gNB connects to `e2term` and announces its RAN functions (KPM, RC, CCC).
+2. **Subscription:** the xApp asks `submgr` (REST), which sends an E2 *RIC Subscription* to the gNB.
+3. **Indication:** the gNB periodically sends *RIC Indication* messages (metrics), which `e2term` delivers to the xApp over **RMR**.
+4. **Control:** the xApp sends *RIC Control* requests (e.g. change a UE's PRB quota) back to the gNB.
+
+### 15.2 Install and start the RIC
+
+```bash
+cd ~/5g
+git clone https://github.com/srsran/oran-sc-ric.git
+cd oran-sc-ric
+docker compose up -d            # first run downloads and builds images (several minutes)
+docker compose ps               # all services "running"
+ip -br addr | grep 10.0.2.1     # new bridge for the RIC network
+```
+
+- If image builds fail with `Could not resolve host`, fix Docker DNS first (3.3).
+- Make sure `10.0.2.0/24` isn't used by anything else on the host (`ip route | grep 10.0.2`).
+
+### 15.3 Enable the E2 agent in OCUDU
+
+Append the `e2` block to your gNB config, `~/5g/gnb_zmq.yml` or `~/5g/gnb_x310.yml` (also in [`configs/e2_ric.yml`](configs/e2_ric.yml)). Add it **once**, as a top-level section:
+
+```bash
+cat >> ~/5g/gnb_zmq.yml <<'EOF'
+
+e2:
+  enable_du_e2: true          # E2 agent in the DU (monolithic gNB = one E2 node)
+  e2sm_kpm_enabled: true      # metrics (KPM)
+  e2sm_rc_enabled: true       # RAN control (RC)
+  e2sm_ccc_enabled: true      # cell configuration and control (CCC)
+  addrs: 10.0.2.10            # RIC e2term
+  bind_addrs: 10.0.2.1        # host on the RIC Docker network
+  port: 36421
+EOF
+grep -n -A8 "^e2:" ~/5g/gnb_zmq.yml
+```
+
+- `enable_cu_cp_e2` / `enable_cu_up_e2` add CU-level E2 nodes (default `false`).
+- If OCUDU rejects `addrs` / `bind_addrs`, use `addr` / `bind_addr` (the srsRAN key names).
+
+### 15.4 Start order
+
+**Core → RIC → gNB → UE**:
+
+```bash
+# 1. Core (if not running)
+cd ~/5g/docker_open5gs && docker compose -f sa-deploy.yaml up -d
+
+# 2. RIC (if not running)
+cd ~/5g/oran-sc-ric && docker compose up -d
+
+# 3. gNB (ZMQ example)
+cd ~/5g/ocudu/build/apps/gnb && sudo ./gnb -c ~/5g/gnb_zmq.yml
+
+# 4. UE: srsUE (11A) or phone (11B), then the routes from section 12
+```
+
+Check that the gNB registered with the RIC:
+
+```bash
+cd ~/5g/oran-sc-ric
+docker compose logs e2mgr  | grep -i -E "setup|connected|gnb_"
+docker compose logs e2term | grep -i -E "setup|sctp" | tail
+```
+
+> **60-second rule:** after the gNB disconnects, the RIC makes the E2 agent wait **60 s** before it may reconnect. If you restart the gNB sooner, the RIC answers `E2 SETUP FAILURE` and the gNB has no RIC connection. Wait a minute between gNB restarts (with ZMQ, also restart the UE afterwards).
+
+### 15.5 Run the example xApps
+
+All xApps run inside the `python_xapp_runner` container, from the `oran-sc-ric` folder. Generate traffic first so the metrics are non-zero:
+
+```bash
+# Terminal A: traffic (srsUE example, see section 12)
+iperf3 -s -B 172.22.0.1 &
+sudo ip netns exec ue1 iperf3 -c 172.22.0.1 -t 600 -R
+```
+
+**Monitoring (E2SM-KPM)**
+
+```bash
+cd ~/5g/oran-sc-ric
+
+# Node-level metrics, e.g. UE throughput
+docker compose exec python_xapp_runner ./simple_mon_xapp.py --metrics=DRB.UEThpDl,DRB.UEThpUl
+
+# Full KPM monitor, all report styles (1–5), incl. per-UE metrics
+docker compose exec python_xapp_runner ./kpm_mon_xapp.py --kpm_report_style=5
+```
+
+Expected output:
+
+```
+RIC Indication Received from gnb_001_001_0000019b for Subscription ID: 65
+E2SM_KPM RIC Indication Content:
+-Measurements Data:
+--Metric: DRB.UEThpDl, Value: ...
+--Metric: DRB.UEThpUl, Value: ...
+```
+
+**Control (E2SM-RC)**: alternates a UE's downlink PRB quota every 5 s:
+
+```bash
+docker compose exec python_xapp_runner ./simple_rc_xapp.py
+```
+
+Watch the effect in the gNB console (`t` + Enter): the UE's DL throughput drops and recovers every 5 s.
+
+**Others** in `xApps/python/`:
+
+| xApp | Service model | Does |
+|---|---|---|
+| `simple_xapp.py` | KPM + RC | Monitoring and control together |
+| `simple_ccc_xapp.py` | CCC | Sends an O-RRMPolicyRatio configuration |
+| `simple_rc_ho_xapp.py` | RC | Triggers a handover (needs **two cells**) |
+
+The xApp sometimes needs a restart before it shows indications (a known issue in the RIC repo). Stop it with Ctrl+C and run it again.
+
+### 15.6 Write your own xApp
+
+`xApps/python/` on the host is **mounted into** the runner container, so you can edit files on the host and run them immediately, without rebuilding:
+
+```bash
+cd ~/5g/oran-sc-ric/xApps/python
+cp simple_mon_xapp.py my_xapp.py           # start from an example
+nano my_xapp.py
+cd ~/5g/oran-sc-ric
+docker compose exec python_xapp_runner ./my_xapp.py --metrics=DRB.UEThpDl
+```
+
+The helper library in `xApps/python/lib/` does the heavy lifting:
+
+- `xAppBase.py`: RMR and REST communication
+- `e2sm_kpm_module.py`: KPM subscriptions and decoding
+- `e2sm_rc_module.py`: RC control messages
+
+### 15.7 Capture E2 traffic
+
+```bash
+RIC_BR=$(ip -br addr | awk '/10\.0\.2\.1\//{print $1}')
+sudo tcpdump -i $RIC_BR -w /tmp/e2.pcap 'sctp port 36421'
+```
+
+Open the capture in **Wireshark ≥ 4.0.7**, filter `e2ap`, and if needed use **Decode As… → E2AP**. You'll see E2 Setup, RIC Subscription, Indication and Control messages. That's useful for studying E2 security.
+
+### 15.8 Stop the RIC
+
+```bash
+cd ~/5g/oran-sc-ric && docker compose down
+```
+
+To run the gNB **without** the RIC again, set `enable_du_e2: false`, or remove the `e2:` block.
+
+### 15.9 Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| gNB can't connect to the RIC / SCTP errors | RIC not running, wrong IPs | `docker compose ps`; `ping 10.0.2.10`; `addrs: 10.0.2.10`, `bind_addrs: 10.0.2.1` |
+| `E2 SETUP FAILURE` after a gNB restart | RIC 60 s time-to-wait | Wait 60 s, restart the gNB (then the UE) |
+| gNB rejects the `e2` keys | Key names differ in your OCUDU version | Try `addr` / `bind_addr`; check the OCUDU config reference |
+| xApp subscribes but prints nothing | Known RIC issue / no traffic | Restart the xApp; run iperf3 so metrics change |
+| All metric values 0 | No UE attached or no traffic | Attach the UE, generate traffic (15.5) |
+| `docker compose up` build fails | DNS inside Docker | Section 3.3 |
+| RIC on another PC | `e2term` not published | Uncomment `ports: "36421:36421/sctp"` under `e2term` in the RIC's `docker-compose.yml`; `addrs` = RIC host IP, `bind_addrs` = gNB host IP |
+
+---
+
+## 16. Next steps
 
 - **Multiple simulated UEs:** use a GNU Radio ZMQ broker (srsRAN multi-UE tutorial).
 - **Security experiments:** change the AMF integrity/ciphering order, enable SUCI with home-network keys, analyse NAS/NGAP captures.
+- **More O-RAN:** rApps (O-RAN SC Non-RT RIC, A1 policies towards the near-RT RIC), FlexRIC as an alternative near-RT RIC, dApps over E3 (currently OpenAirInterface-based).
 - **Move from simulation to radio:** the core and subscriber steps stay the same. Switch the gNB config from 8A to 8B and the UE from srsUE to a phone.
 
 ---
 
-## 16. References
+## 17. References
 
 - Open5GS in Docker: <https://github.com/herlesupreeth/docker_open5gs>
 - OCUDU docs: <https://docs.ocudu.org/>, source: <https://gitlab.com/ocudu/ocudu>, config reference: <https://docs.ocudu.org/user_manual/config_reference/>
@@ -979,5 +1175,8 @@ Logs: gNB `/tmp/gnb.log`, srsUE `/tmp/ue.log`, core `docker logs <amf|smf|upf|au
 - X310 OTA example: <https://github.com/uoy-research/srsRAN-USRPs-OTA>
 - OCUDU + COTS example: <https://github.com/SystronLab/OCUDU-USRPs-COTS>
 - s5uishida, OCUDU with ZMQ: <https://github.com/s5uishida/build_ocudu_zmq>
+- O-RAN SC near-RT RIC in Docker (srsRAN): <https://github.com/srsran/oran-sc-ric>
+- O-RAN SC documentation: <https://docs.o-ran-sc.org/>
+- srsRAN Project, near-RT RIC tutorial: <https://docs.srsran.com/projects/project/en/latest/tutorials/source/near-rt-ric/source/index.html>
 
 *Architecture diagrams are original drawings in the style of the srsRAN Project documentation. Their source is in [`docs/diagrams/gen.py`](docs/diagrams/gen.py) (`python3 docs/diagrams/gen.py docs/images`).*
