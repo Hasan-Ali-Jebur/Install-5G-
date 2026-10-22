@@ -1000,7 +1000,7 @@ cd ~/5g
 git clone https://github.com/srsran/oran-sc-ric.git
 cd oran-sc-ric
 docker compose up -d            # first run downloads and builds images (several minutes)
-docker compose ps               # all services "running"
+docker compose ps               # 7 services Up: dbaas, rtmgr_sim, submgr, e2term, e2mgr, appmgr, python_xapp_runner
 ip -br addr | grep 10.0.2.1     # new bridge for the RIC network
 ```
 
@@ -1151,6 +1151,7 @@ To run the gNB **without** the RIC again, set `enable_du_e2: false`, or remove t
 | xApp subscribes but prints nothing | Known RIC issue / no traffic | Restart the xApp; run iperf3 so metrics change |
 | All metric values 0 | No UE attached or no traffic | Attach the UE, generate traffic (15.5) |
 | `docker compose up` build fails | DNS inside Docker | Section 3.3 |
+| `failed to set up container networking: network <id> not found`; `ric_dbaas` / `ric_submgr` missing | Old RIC containers still point to a deleted Docker network | `docker compose down --remove-orphans`, remove old `ric_*` containers (`docker ps -a --filter name=ric_`), then `docker compose up -d --force-recreate` |
 | RIC on another PC | `e2term` not published | Uncomment `ports: "36421:36421/sctp"` under `e2term` in the RIC's `docker-compose.yml`; `addrs` = RIC host IP, `bind_addrs` = gNB host IP |
 
 ---
