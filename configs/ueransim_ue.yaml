@@ -1,0 +1,67 @@
+# UERANSIM UE for the docker_open5gs core (guide 02).
+# Copy to ~/5g/ueransim_ue.yaml
+#
+# `nr-ue -n N` starts N UEs and counts the IMSI up from `supi`:
+#   001010000001001, 001010000001002, ...
+# Every one of them must exist in the subscriber DB
+# (scripts/add_ueransim_subscribers.sh).
+
+supi: 'imsi-001010000001001'   # FIRST IMSI of the UERANSIM range
+mcc: '001'
+mnc: '01'
+protectionScheme: 0            # null scheme: SUCI carries the plain MSIN
+homeNetworkPublicKey: '5a8d38864820197c3394b92613b20b91633cbd897119273bf8e4a6f4eec0a650'
+homeNetworkPublicKeyId: 1
+routingIndicator: '0000'
+
+# Same public lab values as srsUE in guide 01 (section 10.2). Change them for anything shared.
+key: '00112233445566778899aabbccddeeff'
+op: '63BFA50EE6523365FF14C1F45F88737D'
+opType: 'OPC'
+amf: '8000'
+imei: '356938035643803'
+imeiSv: '4370816125816151'
+
+tunNetmask: '255.255.255.0'
+useNamespace: false
+
+gnbSearchList:
+  - 127.0.0.1
+
+uacAic:
+  mps: false
+  mcs: false
+
+uacAcc:
+  normalClass: 0
+  class11: false
+  class12: false
+  class13: false
+  class14: false
+  class15: false
+
+sessions:
+  - type: 'IPv4'
+    apn: 'srsapn'        # DNN used everywhere in this repo (guide 01, 4.3)
+    slice:
+      sst: 1
+
+configured-nssai:
+  - sst: 1
+
+default-nssai:
+  - sst: 1
+
+integrity:
+  IA1: true
+  IA2: true
+  IA3: true
+
+ciphering:
+  EA1: true
+  EA2: true
+  EA3: true
+
+integrityMaxRate:
+  uplink: 'full'
+  downlink: 'full'
