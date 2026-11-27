@@ -1,0 +1,25 @@
+# UERANSIM gNB for the docker_open5gs core (guide 02).
+# Copy to ~/5g/ueransim_gnb.yaml
+#
+# Runs next to OCUDU: OCUDU uses 172.22.0.1, UERANSIM uses its own
+# bridge alias 172.22.0.200 so both can bind GTP-U (UDP 2152).
+
+mcc: '001'          # = MCC in docker_open5gs/.env
+mnc: '01'           # = MNC in docker_open5gs/.env
+
+nci: '0x000000010'  # NR Cell Identity (36-bit) -> gNB ID 1, different from OCUDU
+idLength: 32        # gNB ID length in bits [22...32]
+tac: 1              # = TAC in docker_open5gs/.env
+
+linkIp: 127.0.0.1       # simulated radio link: UEs find the gNB here
+ngapIp: 172.22.0.200    # N2 source address (bridge alias, see guide 02 step 2)
+gtpIp: 172.22.0.200     # N3 source address (bridge alias)
+
+amfConfigs:
+  - address: 172.22.0.10   # AMF container
+    port: 38412
+
+slices:
+  - sst: 1
+
+ignoreStreamIds: true
